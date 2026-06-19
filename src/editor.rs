@@ -12,6 +12,7 @@ pub struct Buffer {
     pub lines: Vec<String>, // Invariant: always holds at least one line
     pub path: Option<PathBuf>,
     pub is_dirty: bool,
+    pub ends_with_newline: bool,
 }
 
 impl Default for Buffer {
@@ -20,6 +21,7 @@ impl Default for Buffer {
             lines: vec![String::new()],
             path: None,
             is_dirty: false,
+            ends_with_newline: false,
         }
     }
 }
@@ -28,9 +30,9 @@ impl Buffer {
     pub fn from_path(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
 
-        let lines = match fs::read_to_string(path) {
-            Ok(s) => s.lines().map(str::to_owned).collect(),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => vec![String::new()],
+        let (lines, ends_with_newline) = match fs::read_to_string(path) {
+            Ok(s) => Self::lines_from_str(&s),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (vec![String::new()], false),
             Err(e) => return Err(e),
         };
 
@@ -38,7 +40,17 @@ impl Buffer {
             lines,
             path: Some(path.to_path_buf()),
             is_dirty: false,
+            ends_with_newline,
         })
+    }
+
+    fn lines_from_str(s: &str) -> (Vec<String>, bool) {
+        let ends_with_newline = s.ends_with('\n');
+        let mut lines: Vec<_> = s.lines().map(str::to_owned).collect();
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        (lines, ends_with_newline)
     }
 
     pub fn write(&mut self) -> io::Result<()> {
@@ -50,16 +62,20 @@ impl Buffer {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "buffer has no path"))?;
 
         let f = fs::File::create(path)?;
-        let mut wtr = io::BufWriter::new(f);
+        let mut writer = io::BufWriter::new(f);
 
         for (i, line) in self.lines.iter().enumerate() {
-            wtr.write_all(line.as_bytes())?;
             if i > 0 {
-                wtr.write_all(b"\n")?;
+                writer.write_all(b"\n")?;
             }
+            writer.write_all(line.as_bytes())?;
         }
 
-        wtr.flush()?;
+        if self.ends_with_newline && !(self.lines.len() == 1 && self.lines[0].is_empty()) {
+            writer.write_all(b"\n")?;
+        }
+
+        writer.flush()?;
         self.is_dirty = false;
         Ok(())
     }
@@ -182,8 +198,7 @@ impl Editor {
     // Move
 
     pub fn move_to(&mut self, x: usize, y: usize) {
-        let cur = self.cursor_mut();
-        *cur = Cursor { x, y, want_x: x };
+        *self.cursor_mut() = Cursor { x, y, want_x: x };
     }
 
     pub fn cursor_clamp_x(&mut self) {
@@ -336,11 +351,6 @@ impl Editor {
                 match self.mode {
                     Mode::Normal => normal(self, key),
                     Mode::Insert => insert(self, key),
-                }
-            }
-            Event::Mouse(ev) => {
-                if ev.kind == MouseEventKind::Down(MouseButton::Left) {
-                    self.move_to(ev.column as usize, ev.row as usize);
                 }
             }
             _ => {}
