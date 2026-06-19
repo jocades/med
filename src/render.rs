@@ -5,24 +5,14 @@ use std::io::{self, StdoutLock, Write};
 use crossterm::{cursor::*, queue, style::*, terminal::*};
 
 use crate::editor::{Editor, Mode};
-use crate::layout::{Rect, Split};
+use crate::layout::{Layout, Rect, Split};
 
-pub fn render(ed: &Editor, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
-    let (w, h) = size()?;
-    let screen = Rect::new(0, 0, w, h);
-
-    let [window, status, command] = screen
-        .vsplit([Split::Fill, Split::Fixed(1), Split::Fixed(1)])
-        .unwrap();
-
-    let [gutter, buffer] = window.hsplit([Split::Fixed(5), Split::Fill]).unwrap();
-
+pub fn render(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     queue!(stdout, Clear(ClearType::All))?;
-    render_gutter(ed, stdout, gutter)?;
-    render_buffer(ed, stdout, buffer)?;
-    render_status(ed, stdout, status)?;
-    render_command(ed, stdout, command)?;
-    render_cursor(ed, stdout, buffer)?;
+    status(ed, stdout, layout.status)?;
+    gutter(ed, stdout, layout.gutter)?;
+    buffer(ed, stdout, layout.buffer)?;
+    cursor(ed, stdout, layout.buffer)?;
     stdout.flush()?;
     Ok(())
 }
@@ -41,24 +31,29 @@ impl ToColor for u32 {
     }
 }
 
-fn render_gutter(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
-    static mut NUMBERS: Vec<String> = Vec::new();
+pub trait TryToColor {
+    type Error;
+
+    fn try_to_color(&self) -> Result<Color, Self::Error>;
+}
+
+impl TryToColor for &str {
+    type Error = std::num::ParseIntError;
+
+    fn try_to_color(&self) -> Result<Color, Self::Error> {
+        u32::from_str_radix(self, 16).map(|n| n.to_color())
+    }
+}
+
+fn gutter(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
     queue!(stdout, SetForegroundColor(Color::DarkGrey))?;
 
     let buf = ed.buf();
+    let scroll = ed.win().scroll;
 
     for y in 0..rect.h as usize {
         if buf.lines.get(y).is_some() {
-            #[allow(static_mut_refs)]
-            let line_no = unsafe {
-                if let Some(line_no) = NUMBERS.get(y) {
-                    line_no
-                } else {
-                    NUMBERS.push((y + 1).to_string());
-                    &NUMBERS[y]
-                }
-            };
-
+            let line_no = (scroll.y + y + 1).to_string();
             queue!(
                 stdout,
                 MoveTo(rect.x + 4 - line_no.len() as u16, rect.y + y as u16),
@@ -73,8 +68,9 @@ fn render_gutter(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> i
     Ok(())
 }
 
-fn render_buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
+fn buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
     let buf = ed.buf();
+    let scroll = ed.win().scroll;
 
     queue!(
         stdout,
@@ -83,7 +79,7 @@ fn render_buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> i
     )?;
 
     for y in 0..rect.h as usize {
-        if let Some(line) = buf.lines.get(y) {
+        if let Some(line) = buf.lines.get(scroll.y + y) {
             let len = line.len().min(rect.w as usize);
             queue!(
                 stdout,
@@ -95,13 +91,17 @@ fn render_buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> i
     Ok(())
 }
 
-fn render_status(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
-    let cursor = ed.cursor();
-
+fn status(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
     let mode = format!(" {} ", ed.mode);
-    let path = " src/main.rs ";
-    let cursor = format!(" {},{} ", cursor.y, cursor.x);
+    let path = ed
+        .buf()
+        .path
+        .as_ref()
+        .map(|p| p.to_str().unwrap())
+        .unwrap_or("[No Name]");
 
+    let cur = ed.cursor();
+    let pos = format!(" {},{} ", cur.y, cur.x);
     let pad = rect.w as usize - mode.len() - path.len();
 
     queue!(
@@ -111,23 +111,24 @@ fn render_status(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> i
         Print(mode.black().on_green()),
         ResetColor,
         Print(path),
-        Print(format!("{cursor:>pad$}")),
+        Print(format!("{pos:>pad$}")),
         ResetColor,
     )?;
 
     Ok(())
 }
 
-fn render_cursor(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
+fn cursor(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
     let cursor = ed.cursor();
+    let scroll = ed.win().scroll;
 
     let style = match ed.mode {
         Mode::Insert => SetCursorStyle::SteadyBar,
         Mode::Normal => SetCursorStyle::SteadyBlock,
     };
 
-    let x = rect.x + cursor.x as u16;
-    let y = rect.y + cursor.y as u16;
+    let x = rect.x + (cursor.x - scroll.x) as u16;
+    let y = rect.y + (cursor.y - scroll.y) as u16;
 
     queue!(stdout, style, MoveTo(x, y))?;
     Ok(())

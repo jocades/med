@@ -5,6 +5,18 @@ pub enum Error {
     NotEnoughSpace,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Vec2<T: Copy> {
+    pub x: T,
+    pub y: T,
+}
+
+impl<T: Copy> Vec2<T> {
+    pub const fn new(x: T, y: T) -> Self {
+        Self { x, y }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Split {
     Fill,
@@ -81,28 +93,69 @@ fn compute_segments<const N: usize>(
         return Err(Error::NotEnoughSpace);
     }
 
-    let remaining = available - fixed_total;
+    let fill_total = available - fixed_total;
     let fill_len = if fill_count > 0 {
-        remaining / fill_count
+        fill_total / fill_count
     } else {
         0
     };
 
     let mut out = [0u16; N];
-    let mut used = 0;
+    let mut used_fill = 0;
 
     for (i, split) in splits.iter().enumerate() {
         let len = match split {
             Split::Fixed(n) => *n,
-            Split::Fill if last_fill_index == Some(i) => available - used,
-            Split::Fill => fill_len,
+            Split::Fill if last_fill_index == Some(i) => fill_total - used_fill,
+            Split::Fill => {
+                used_fill += fill_len;
+                fill_len
+            }
         };
 
         out[i] = len;
-        used += len;
     }
 
     Ok(out)
+}
+
+pub struct Layout {
+    pub screen: Rect,
+    pub main: Rect,
+    pub gutter: Rect,
+    pub buffer: Rect,
+    pub status: Rect,
+}
+
+impl Layout {
+    pub fn from_screen(screen: Rect) -> Result<Self, Error> {
+        let [main, status] = screen.vsplit([Split::Fill, Split::Fixed(1)])?;
+        let [gutter, buffer] = main.hsplit([Split::Fixed(5), Split::Fill])?;
+
+        Ok(Self {
+            screen,
+            main,
+            gutter,
+            buffer,
+            status,
+        })
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::NotEnoughSpace => f.write_str("Not enought space"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl From<Error> for std::io::Error {
+    fn from(e: Error) -> Self {
+        std::io::Error::other(e)
+    }
 }
 
 #[cfg(test)]
@@ -113,12 +166,11 @@ mod tests {
 
     #[test]
     fn rect_hsplit() -> Result<()> {
-        let a = dbg!(Rect::new(0, 0, 4, 10).hsplit([Split::Fixed(2), Split::Fixed(2)]))?;
+        let a = Rect::new(0, 0, 4, 10).hsplit([Split::Fixed(2), Split::Fixed(2)])?;
         assert_eq!(a[0], Rect::new(0, 0, 2, 10));
         assert_eq!(a[1], Rect::new(2, 0, 2, 10));
 
-        let b =
-            dbg!(Rect::new(0, 0, 4, 10).hsplit([Split::Fixed(1), Split::Fill, Split::Fixed(1)]))?;
+        let b = Rect::new(0, 0, 4, 10).hsplit([Split::Fixed(1), Split::Fill, Split::Fixed(1)])?;
         assert_eq!(b[0], Rect::new(0, 0, 1, 10));
         assert_eq!(b[1], Rect::new(1, 0, 2, 10));
         assert_eq!(b[2], Rect::new(3, 0, 1, 10));
@@ -126,24 +178,24 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn rect_vsplit() {
-    //     let a = dbg!(Rect::new(0, 0, 10, 4).vsplit(&[Split::Fixed(2), Split::Fixed(2)]));
-    //     assert_eq!(a.len(), 2);
-    //     assert_eq!(a[0], Rect::new(0, 0, 10, 2));
-    //     assert_eq!(a[1], Rect::new(0, 2, 10, 2));
-    //
-    //     let b =
-    //         dbg!(Rect::new(0, 0, 10, 4).vsplit(&[Split::Fixed(1), Split::Fill, Split::Fixed(1)]));
-    //     assert_eq!(b.len(), 3);
-    //     assert_eq!(b[0], Rect::new(0, 0, 10, 1));
-    //     assert_eq!(b[1], Rect::new(0, 1, 10, 2));
-    //     assert_eq!(b[2], Rect::new(0, 3, 10, 1));
-    // }
-    //
-    // // todo
-    // #[test]
-    // fn not_enough_room() {
-    //     let _ = dbg!(Rect::new(0, 0, 10, 10).hsplit(&[Split::Fixed(20)]));
-    // }
+    #[test]
+    fn rect_vsplit() -> Result<()> {
+        let a = Rect::new(0, 0, 10, 4).vsplit([Split::Fixed(2), Split::Fixed(2)])?;
+        assert_eq!(a[0], Rect::new(0, 0, 10, 2));
+        assert_eq!(a[1], Rect::new(0, 2, 10, 2));
+
+        let b = Rect::new(0, 0, 10, 4).vsplit([Split::Fixed(1), Split::Fill, Split::Fixed(1)])?;
+        assert_eq!(b[0], Rect::new(0, 0, 10, 1));
+        assert_eq!(b[1], Rect::new(0, 1, 10, 2));
+        assert_eq!(b[2], Rect::new(0, 3, 10, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn not_enough_space() {
+        let res = dbg!(Rect::new(0, 0, 10, 10).hsplit([Split::Fixed(20)]));
+        assert_eq!(res, Err(super::Error::NotEnoughSpace));
+        let res = dbg!(Rect::new(0, 0, 10, 10).vsplit([Split::Fixed(20)]));
+        assert_eq!(res, Err(super::Error::NotEnoughSpace));
+    }
 }

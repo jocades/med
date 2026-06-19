@@ -1,12 +1,17 @@
 //! # Pure editor state and behaviour.
 
-use std::path::PathBuf;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 
+use crate::layout::Vec2;
+
 pub struct Buffer {
-    pub lines: Vec<String>,
+    pub lines: Vec<String>, // Invariant: always holds at least one line
     pub path: Option<PathBuf>,
+    pub is_dirty: bool,
 }
 
 impl Default for Buffer {
@@ -14,14 +19,72 @@ impl Default for Buffer {
         Self {
             lines: vec![String::new()],
             path: None,
+            is_dirty: false,
         }
+    }
+}
+
+impl Buffer {
+    pub fn from_path(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
+
+        let lines = match fs::read_to_string(path) {
+            Ok(s) => s.lines().map(str::to_owned).collect(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => vec![String::new()],
+            Err(e) => return Err(e),
+        };
+
+        Ok(Self {
+            lines,
+            path: Some(path.to_path_buf()),
+            is_dirty: false,
+        })
+    }
+
+    pub fn write(&mut self) -> io::Result<()> {
+        use io::Write;
+
+        let path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "buffer has no path"))?;
+
+        let f = fs::File::create(path)?;
+        let mut wtr = io::BufWriter::new(f);
+
+        for (i, line) in self.lines.iter().enumerate() {
+            wtr.write_all(line.as_bytes())?;
+            if i > 0 {
+                wtr.write_all(b"\n")?;
+            }
+        }
+
+        wtr.flush()?;
+        self.is_dirty = false;
+        Ok(())
     }
 }
 
 #[derive(Default)]
 pub struct Window {
-    bufid: usize,
-    cursor: Cursor,
+    pub bufid: usize,
+    pub cursor: Cursor,
+    /// The top-left viewport offset into the buffer.
+    pub scroll: Vec2<usize>,
+}
+
+impl Window {
+    pub fn sync_view(&mut self, view_h: u16) {
+        let h = view_h as usize;
+
+        if self.cursor.y < self.scroll.y {
+            self.scroll.y = self.cursor.y;
+            crate::debug!("SCROLL_UP {:?} {:?}", self.cursor, self.scroll)
+        } else if self.cursor.y >= self.scroll.y + h {
+            self.scroll.y = self.cursor.y + 1 - h;
+            crate::debug!("SCROLL_DOWN {:?} {:?}", self.cursor, self.scroll)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,8 +102,8 @@ pub enum Mode {
 }
 
 pub struct Editor {
-    pub buffers: Vec<Buffer>,
-    pub windows: Vec<Window>,
+    pub buffers: Vec<Buffer>, // Invariant: at least one buffer
+    pub windows: Vec<Window>, // Invariant: at least one window
     pub winid: usize,
 
     pub mode: Mode,
@@ -49,9 +112,13 @@ pub struct Editor {
 
 impl Editor {
     pub fn new() -> Self {
+        Self::with_buffer(Buffer::default())
+    }
+
+    pub fn with_buffer(buffer: Buffer) -> Self {
         Self {
             mode: Mode::Normal,
-            buffers: vec![Buffer::default()],
+            buffers: vec![buffer],
             windows: vec![Window::default()],
             winid: 0,
             should_quit: false,

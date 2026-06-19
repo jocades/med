@@ -15,8 +15,9 @@ pub(crate) static mut DEBUG_FILE: LazyLock<File> = LazyLock::new(|| {
 
 #[macro_export]
 macro_rules! debug {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
+        use std::io::Write;
         #[allow(static_mut_refs)]
         unsafe { writeln!($crate::DEBUG_FILE, $($arg)*).unwrap(); }
-    };
+    }};
 }
