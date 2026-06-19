@@ -1,3 +1,5 @@
+//! # Terminal lifecycle and output handle ownership.
+
 use std::io::{self, StdoutLock};
 
 use crossterm::{cursor::SetCursorStyle, execute, terminal::*};
@@ -47,7 +49,7 @@ pub fn restore() {
 
 pub fn try_restore() -> io::Result<()> {
     execute!(
-        io::stderr(),
+        io::stdout(),
         LeaveAlternateScreen,
         SetCursorStyle::DefaultUserShape,
     )?;

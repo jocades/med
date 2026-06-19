@@ -1,44 +1,12 @@
-use std::io::{self, StdoutLock, Write};
+//! # Pure editor state and behaviour.
+
 use std::path::PathBuf;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::{cursor::*, queue, style::*, terminal::*};
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Vec2 {
-    pub x: usize,
-    pub y: usize,
-}
-
-impl Vec2 {
-    pub const fn new(x: usize, y: usize) -> Self {
-        Self { x, y }
-    }
-
-    pub const fn zero() -> Self {
-        Self::new(0, 0)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum Mode {
-    #[default]
-    Normal,
-    Insert,
-}
-
-impl std::fmt::Display for Mode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Mode::Normal => f.write_str("NORMAL"),
-            Mode::Insert => f.write_str("INSERT"),
-        }
-    }
-}
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 
 pub struct Buffer {
-    lines: Vec<String>,
-    path: Option<PathBuf>,
+    pub lines: Vec<String>,
+    pub path: Option<PathBuf>,
 }
 
 impl Default for Buffer {
@@ -53,10 +21,23 @@ impl Default for Buffer {
 #[derive(Default)]
 pub struct Window {
     bufid: usize,
-    cursor: Vec2,
+    cursor: Cursor,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Cursor {
+    pub x: usize,
+    pub y: usize,
+    /// For vertical motions
+    pub want_x: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    Insert,
+}
+
 pub struct Editor {
     pub buffers: Vec<Buffer>,
     pub windows: Vec<Window>,
@@ -71,10 +52,7 @@ impl Editor {
         Self {
             mode: Mode::Normal,
             buffers: vec![Buffer::default()],
-            windows: vec![Window {
-                bufid: 0,
-                cursor: Vec2::zero(),
-            }],
+            windows: vec![Window::default()],
             winid: 0,
             should_quit: false,
         }
@@ -100,11 +78,11 @@ impl Editor {
         &mut self.buffers[bufid]
     }
 
-    pub fn cursor(&self) -> Vec2 {
+    pub fn cursor(&self) -> Cursor {
         self.win().cursor
     }
 
-    pub fn cursor_mut(&mut self) -> &mut Vec2 {
+    pub fn cursor_mut(&mut self) -> &mut Cursor {
         &mut self.win_mut().cursor
     }
 
@@ -137,7 +115,12 @@ impl Editor {
     // Move
 
     pub fn move_to(&mut self, x: usize, y: usize) {
-        *self.cursor_mut() = Vec2::new(x, y);
+        let cur = self.cursor_mut();
+        *cur = Cursor {
+            x,
+            y,
+            want_x: cur.want_x,
+        };
     }
 
     pub fn cursor_clamp_x(&mut self) {
@@ -149,6 +132,7 @@ impl Editor {
     pub fn move_left(&mut self) {
         let cur = self.cursor_mut();
         cur.x = cur.x.saturating_sub(1);
+        cur.want_x = cur.x;
     }
 
     pub fn move_right(&mut self) {
@@ -156,12 +140,14 @@ impl Editor {
         let cur = self.cursor_mut();
         if cur.x < max {
             cur.x += 1;
+            cur.want_x = cur.x;
         }
     }
 
     pub fn move_up(&mut self) {
         let cur = self.cursor_mut();
         cur.y = cur.y.saturating_sub(1);
+        cur.x = cur.want_x;
         self.cursor_clamp_x();
     }
 
@@ -170,16 +156,22 @@ impl Editor {
         let cur = self.cursor_mut();
         if cur.y < max {
             cur.y += 1;
+            cur.x = cur.want_x;
             self.cursor_clamp_x();
         }
     }
 
     pub fn move_bol(&mut self) {
-        self.cursor_mut().x = 0;
+        let cur = self.cursor_mut();
+        cur.x = 0;
+        cur.want_x = cur.x;
     }
 
     pub fn move_eol(&mut self) {
-        self.cursor_mut().x = self.cursor_max_x();
+        let max = self.cursor_max_x();
+        let cur = self.cursor_mut();
+        cur.x = max;
+        cur.want_x = cur.x;
     }
 
     // Edit
@@ -277,18 +269,14 @@ impl Editor {
                     Mode::Insert => insert(self, key),
                 }
             }
+            Event::Mouse(ev) => {
+                if ev.kind == MouseEventKind::Down(MouseButton::Left) {
+                    self.move_to(ev.column as usize, ev.row as usize);
+                }
+            }
             _ => {}
         }
     }
-}
-
-#[allow(unused)]
-#[derive(Debug, Clone, Copy, Default)]
-struct Rect {
-    x: u16,
-    y: u16,
-    w: u16,
-    h: u16,
 }
 
 fn normal(ed: &mut Editor, key: KeyEvent) {
@@ -336,6 +324,10 @@ fn normal(ed: &mut Editor, key: KeyEvent) {
         // edit
         KeyCode::Char('x') => ed.delete_under_cursor(),
         KeyCode::Char('D') => ed.delete_to_eol(),
+        KeyCode::Char('C') => {
+            ed.mode = Mode::Insert;
+            ed.delete_to_eol();
+        }
 
         _ => {}
     }
@@ -363,51 +355,23 @@ pub fn insert(ed: &mut Editor, key: KeyEvent) {
 
         KeyCode::Enter => ed.enter(),
         KeyCode::Backspace => ed.backspace(),
+        KeyCode::Tab => {
+            ed.insert_char(' ');
+            ed.insert_char(' ');
+            let cur = ed.cursor_mut();
+            cur.x += 2;
+            cur.want_x = cur.x;
+        }
 
         _ => {}
     }
 }
 
-pub fn render(ed: &Editor, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
-    todo!()
-    // let (_, h) = size()?;
-    //
-    // queue!(stdout, Clear(ClearType::All))?;
-    //
-    // // Buffer
-    // for (i, line) in ed.buffer.iter().enumerate() {
-    //     queue!(stdout, MoveTo(0, i as u16), Print(line))?;
-    // }
-    //
-    // // Statusline
-    // queue!(
-    //     stdout,
-    //     MoveTo(0, h.saturating_sub(1)),
-    //     SetForegroundColor(Color::Black),
-    //     SetBackgroundColor(Color::White),
-    // )?;
-    // write!(
-    //     stdout,
-    //     "mode: {} row: {} col: {} lines: {}",
-    //     ed.mode,
-    //     ed.cursor.y,
-    //     ed.cursor.x,
-    //     ed.buffer.len(),
-    // )?;
-    // queue!(stdout, ResetColor)?;
-    //
-    // // Cursor
-    // let cursor_style = match ed.mode {
-    //     Mode::Insert => SetCursorStyle::SteadyBar,
-    //     _ => SetCursorStyle::SteadyBlock,
-    // };
-    //
-    // queue!(
-    //     stdout,
-    //     cursor_style,
-    //     MoveTo(ed.cursor.x as u16, ed.cursor.y as u16)
-    // )?;
-    //
-    // stdout.flush()?;
-    // Ok(())
+impl std::fmt::Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Mode::Normal => f.write_str("NORMAL"),
+            Mode::Insert => f.write_str("INSERT"),
+        }
+    }
 }
