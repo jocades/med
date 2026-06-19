@@ -116,17 +116,19 @@ impl Editor {
 
     pub fn move_to(&mut self, x: usize, y: usize) {
         let cur = self.cursor_mut();
-        *cur = Cursor {
-            x,
-            y,
-            want_x: cur.want_x,
-        };
+        *cur = Cursor { x, y, want_x: x };
     }
 
     pub fn cursor_clamp_x(&mut self) {
         let max = self.cursor_max_x();
         let cur = self.cursor_mut();
         cur.x = cur.x.min(max);
+    }
+
+    fn cursor_clamp_sync_x(&mut self) {
+        self.cursor_clamp_x();
+        let cur = self.cursor_mut();
+        cur.want_x = cur.x;
     }
 
     pub fn move_left(&mut self) {
@@ -206,7 +208,7 @@ impl Editor {
         }
 
         self.remove_char(0);
-        self.cursor_clamp_x();
+        self.cursor_clamp_sync_x();
     }
 
     pub fn delete_to_eol(&mut self) {
@@ -217,7 +219,7 @@ impl Editor {
         }
 
         self.line_mut().truncate(x);
-        self.cursor_clamp_x();
+        self.cursor_clamp_sync_x();
     }
 
     // Insert commands
@@ -243,7 +245,7 @@ impl Editor {
 
         if cur.x > 0 {
             // at mid or eol: remove char
-            self.cursor_mut().x -= 1;
+            self.move_left();
             self.remove_char(0);
             return;
         }
@@ -289,7 +291,7 @@ fn normal(ed: &mut Editor, key: KeyEvent) {
         }
         KeyCode::Char('I') => {
             ed.mode = Mode::Insert;
-            ed.cursor_mut().x = 0;
+            ed.move_bol();
         }
         KeyCode::Char('A') => {
             ed.mode = Mode::Insert;
@@ -298,14 +300,13 @@ fn normal(ed: &mut Editor, key: KeyEvent) {
         KeyCode::Char('o') => {
             ed.insert_line(1, None);
             ed.mode = Mode::Insert;
-            let cur = ed.cursor_mut();
-            cur.x = 0;
-            cur.y += 1;
+            ed.cursor_mut().y += 1;
+            ed.move_bol();
         }
         KeyCode::Char('O') => {
             ed.insert_line(0, None);
             ed.mode = Mode::Insert;
-            ed.cursor_mut().x = 0;
+            ed.move_bol();
         }
 
         // movement
@@ -350,7 +351,9 @@ pub fn insert(ed: &mut Editor, key: KeyEvent) {
         // edit
         KeyCode::Char(ch) => {
             ed.insert_char(ch);
-            ed.cursor_mut().x += 1;
+            let cur = ed.cursor_mut();
+            cur.x += 1;
+            cur.want_x = cur.x;
         }
 
         KeyCode::Enter => ed.enter(),

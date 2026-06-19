@@ -1,8 +1,8 @@
 # 06/17/26
 
+- [x] Window / Viewport / Rect - A view into a buffer with scroll, gutter and showing only visible lines
+- [x] Cleanup editor data model to support multiple files (buffers) openned
 - [ ] Add simple command mode for things like quit, open, save
-- [ ] Cleanup editor data model to support multiple files (buffers) openned
-- [ ] Window / Viewport / Rect - A view into a buffer with scroll, gutter and showing only visible lines
 - [ ] Terminal buffer of Vec<{ ch, fg, bg }> diff then redraw changes only
 
 ---
