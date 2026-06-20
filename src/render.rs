@@ -9,10 +9,11 @@ use crate::layout::{Layout, Rect};
 
 pub fn render(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     queue!(stdout, Clear(ClearType::All))?;
-    status(ed, stdout, layout.status)?;
-    gutter(ed, stdout, layout.gutter)?;
-    buffer(ed, stdout, layout.buffer)?;
-    cursor(ed, stdout, layout.buffer)?;
+    status(ed, layout.status, stdout)?;
+    gutter(ed, layout.gutter, stdout)?;
+    buffer(ed, layout.buffer, stdout)?;
+    cmdline(ed, layout.cmdline, stdout)?;
+    cursor(ed, &layout, stdout)?;
     stdout.flush()?;
     Ok(())
 }
@@ -45,7 +46,7 @@ impl TryToColor for &str {
     }
 }
 
-fn gutter(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
+fn gutter(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     queue!(stdout, SetForegroundColor(Color::DarkGrey))?;
 
     let buf = ed.buf();
@@ -72,7 +73,7 @@ const FG: Color = Color::Rgb {
     b: 244,
 };
 
-fn buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
+fn buffer(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     let buf = ed.buf();
     let scroll = ed.win().scroll;
 
@@ -96,7 +97,7 @@ fn buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Resu
     Ok(())
 }
 
-fn status(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
+fn status(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     let mode = format!(" {} ", ed.mode);
     let path = ed
         .buf()
@@ -134,28 +135,36 @@ fn status(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Resu
     Ok(())
 }
 
-fn cursor(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
+fn cmdline(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
+    if ed.mode == Mode::Command {
+        queue!(stdout, MoveTo(rect.x, rect.y))?;
+        queue!(stdout, Print(":"), Print(&ed.cmdline.buf))?;
+    }
+    Ok(())
+}
+
+fn cursor(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     let cursor = ed.cursor();
     let scroll = ed.win().scroll;
 
     let style = match ed.mode {
-        Mode::Insert => SetCursorStyle::SteadyBar,
         Mode::Normal => SetCursorStyle::SteadyBlock,
+        Mode::Insert | Mode::Command => SetCursorStyle::SteadyBar,
     };
 
-    let x = rect.x + (cursor.x - scroll.x) as u16;
-    let y = rect.y + (cursor.y - scroll.y) as u16;
+    let (x, y) = match ed.mode {
+        Mode::Normal | Mode::Insert => {
+            let rect = layout.buffer;
+            let x = rect.x + (cursor.x - scroll.x) as u16;
+            let y = rect.y + (cursor.y - scroll.y) as u16;
+            (x, y)
+        }
+        Mode::Command => {
+            let rect = layout.cmdline;
+            (rect.x + ed.cmdline.cursor as u16 + 1, rect.y)
+        }
+    };
 
     queue!(stdout, style, MoveTo(x, y))?;
-    Ok(())
-}
-
-#[allow(unused)]
-fn render_command(_ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
-    queue!(
-        stdout,
-        MoveTo(rect.x, rect.y),
-        Clear(ClearType::CurrentLine)
-    )?;
     Ok(())
 }

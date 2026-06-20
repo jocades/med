@@ -115,14 +115,25 @@ pub struct Cursor {
 pub enum Mode {
     Normal,
     Insert,
+    Command,
+}
+
+#[derive(Default)]
+pub struct CmdLine {
+    pub buf: String,
+    pub cursor: usize,
 }
 
 pub struct Editor {
     pub buffers: Vec<Buffer>, // Invariant: at least one buffer
+
     pub windows: Vec<Window>, // Invariant: at least one window
     pub winid: usize,
 
     pub mode: Mode,
+
+    pub cmdline: CmdLine,
+
     pub should_quit: bool,
 }
 
@@ -139,6 +150,7 @@ impl Editor {
             buffers: vec![buffer],
             windows: vec![Window::default()],
             winid: 0,
+            cmdline: CmdLine::default(),
             should_quit: false,
         }
     }
@@ -194,6 +206,7 @@ impl Editor {
         match self.mode {
             Mode::Insert => len,
             Mode::Normal => len.saturating_sub(1),
+            Mode::Command => todo!(),
         }
     }
 
@@ -353,6 +366,7 @@ impl Editor {
                 match self.mode {
                     Mode::Normal => normal(self, key),
                     Mode::Insert => insert(self, key),
+                    Mode::Command => command(self, key),
                 }
             }
             _ => {}
@@ -409,6 +423,12 @@ fn normal(ed: &mut Editor, key: KeyEvent) {
             ed.delete_to_eol();
         }
 
+        // normal -> command
+        KeyCode::Char(':') => {
+            ed.cmdline.clear();
+            ed.mode = Mode::Command;
+        }
+
         _ => {}
     }
 }
@@ -449,11 +469,74 @@ pub fn insert(ed: &mut Editor, key: KeyEvent) {
     }
 }
 
+impl CmdLine {
+    fn move_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn move_right(&mut self) {
+        if self.cursor < self.buf.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        self.buf.insert(self.cursor, ch);
+        self.cursor += 1;
+    }
+
+    fn remove_char(&mut self) {
+        if self.buf.is_empty() {
+            return;
+        }
+        self.buf.remove(self.cursor);
+        self.cursor -= 1;
+    }
+
+    fn clear(&mut self) {
+        self.buf.clear();
+        self.cursor = 0;
+    }
+}
+
+fn command(ed: &mut Editor, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char(ch) => ed.cmdline.insert_char(ch),
+        KeyCode::Left => ed.cmdline.move_left(),
+        KeyCode::Right => ed.cmdline.move_right(),
+
+        KeyCode::Backspace => ed.cmdline.remove_char(),
+
+        KeyCode::Enter => {
+            crate::debug!("cmdline = {}", ed.cmdline.buf);
+
+            let input = ed.cmdline.buf.trim();
+
+            match input.split_once(' ') {
+                Some((name, args)) => {
+                    crate::debug!("name = {name} args = {args}")
+                }
+                None => {
+                    crate::debug!("name = {input}");
+                }
+            }
+
+            ed.mode = Mode::Normal;
+
+            // submit
+        }
+
+        KeyCode::Esc => ed.mode = Mode::Normal,
+        _ => {}
+    }
+}
+
 impl std::fmt::Display for Mode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Mode::Normal => f.write_str("NORMAL"),
             Mode::Insert => f.write_str("INSERT"),
+            Mode::Command => f.write_str("COMMAND"),
         }
     }
 }

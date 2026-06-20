@@ -125,11 +125,14 @@ pub struct Layout {
     pub gutter: Rect,
     pub buffer: Rect,
     pub status: Rect,
+    pub cmdline: Rect,
 }
 
 impl Layout {
     pub fn from_screen(screen: Rect) -> Result<Self, Error> {
-        let [main, status] = screen.vsplit([Split::Fill, Split::Fixed(1)])?;
+        let [main, status, cmdline] =
+            screen.vsplit([Split::Fill, Split::Fixed(1), Split::Fixed(1)])?;
+
         let [gutter, buffer] = main.hsplit([Split::Fixed(5), Split::Fill])?;
 
         Ok(Self {
@@ -138,6 +141,7 @@ impl Layout {
             gutter,
             buffer,
             status,
+            cmdline,
         })
     }
 }
