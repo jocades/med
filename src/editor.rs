@@ -3,15 +3,15 @@
 use std::fmt::Display;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{self, Path, PathBuf};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::layout::Vec2;
 
 pub struct Buffer {
-    pub lines: Vec<String>, // Invariant: always holds at least one line
-    pub path: Option<PathBuf>,
+    pub lines: Vec<String>,    // Invariant: at least one line
+    pub path: Option<PathBuf>, // Invariant: absolute path
     pub is_dirty: bool,
     pub ends_with_newline: bool,
 }
@@ -39,7 +39,7 @@ impl Buffer {
 
         Ok(Self {
             lines,
-            path: Some(path.to_path_buf()),
+            path: Some(path::absolute(path)?),
             is_dirty: false,
             ends_with_newline,
         })
@@ -149,6 +149,10 @@ impl Message {
             kind: MessageKind::Error,
             text: text.into(),
         }
+    }
+
+    fn from_error(e: &dyn std::error::Error) -> Self {
+        Self::error(e.to_string())
     }
 }
 
@@ -402,10 +406,37 @@ impl Editor {
                 Command::Quit => self.should_quit = true,
                 Command::Write => {
                     if let Err(e) = self.buf_mut().write() {
-                        self.message = Some(e.into());
+                        self.message = Some(Message::from_error(&e));
                     } else {
                         let path = self.buf().path.as_ref().unwrap().display();
                         self.message = Some(Message::info(format!("{path} written")));
+                    }
+                }
+                Command::Edit(path) => {
+                    let path = path::absolute(path).unwrap();
+
+                    if let Some(bufid) = self
+                        .buffers
+                        .iter()
+                        .position(|b| b.path.as_ref() == Some(&path))
+                    {
+                        let win = self.win_mut();
+                        win.bufid = bufid;
+                        win.cursor = Cursor::default();
+                        win.scroll = Vec2::default();
+                        return;
+                    }
+
+                    match Buffer::from_path(path) {
+                        Err(e) => self.message = Some(Message::from_error(&e)),
+                        Ok(buffer) => {
+                            self.buffers.push(buffer);
+                            let bufid = self.buffers.len() - 1;
+                            let win = self.win_mut();
+                            win.bufid = bufid;
+                            win.cursor = Cursor::default();
+                            win.scroll = Vec2::default();
+                        }
                     }
                 }
             },
@@ -425,6 +456,12 @@ impl Editor {
         let cmd = match name {
             "q" => Command::Quit,
             "w" => Command::Write,
+            "e" => {
+                let Some(path) = args.next() else {
+                    return Err(CmdError::MissingArgument("path".into()));
+                };
+                Command::Edit(path.into())
+            }
             _ => return Err(CmdError::NotAnEditorCommand(name.into())),
         };
 
@@ -548,6 +585,7 @@ pub fn insert(ed: &mut Editor, key: KeyEvent) {
 #[derive(Debug)]
 pub enum CmdError {
     NotAnEditorCommand(String),
+    MissingArgument(String),
 }
 
 impl std::error::Error for CmdError {}
@@ -556,6 +594,7 @@ impl Display for CmdError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CmdError::NotAnEditorCommand(name) => write!(f, "Not an editor command: {name}"),
+            CmdError::MissingArgument(arg) => write!(f, "Missing argument: {arg}"),
         }
     }
 }
@@ -563,6 +602,7 @@ impl Display for CmdError {
 pub enum Command {
     Quit,
     Write,
+    Edit(String),
 }
 
 impl CmdLine {
