@@ -395,7 +395,6 @@ impl Editor {
         }
 
         self.move_to(0, cur.y + 1);
-        self.buf_mut().smudge();
     }
 
     pub fn backspace(&mut self) {
@@ -405,7 +404,6 @@ impl Editor {
             // at mid or eol: remove char
             self.move_left();
             self.remove_char(0);
-            self.buf_mut().smudge();
             return;
         }
 
@@ -415,7 +413,6 @@ impl Editor {
             let nx = self.line_at(-1).len();
             self.move_to(nx, cur.y - 1);
             self.line_mut().push_str(&line);
-            self.buf_mut().smudge();
         }
     }
 
@@ -662,14 +659,8 @@ fn command(ed: &mut Editor, key: KeyEvent) {
         KeyCode::Char(ch) => ed.cmdline.insert_char(ch),
         KeyCode::Left => ed.cmdline.move_left(),
         KeyCode::Right => ed.cmdline.move_right(),
-
         KeyCode::Backspace => ed.cmdline.remove_char(),
-
-        KeyCode::Enter => {
-            crate::debug!("cmdline = {}", ed.cmdline.buf);
-            ed.cmdline_submit();
-        }
-
+        KeyCode::Enter => ed.cmdline_submit(),
         KeyCode::Esc => ed.mode = Mode::Normal,
         _ => {}
     }
