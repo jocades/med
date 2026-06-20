@@ -13,7 +13,7 @@ pub fn render(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) ->
     gutter(ed, layout.gutter, stdout)?;
     buffer(ed, layout.buffer, stdout)?;
     cmdline(ed, layout.cmdline, stdout)?;
-    cursor(ed, &layout, stdout)?;
+    cursor(ed, layout, stdout)?;
     stdout.flush()?;
     Ok(())
 }
