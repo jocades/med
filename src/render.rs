@@ -5,7 +5,7 @@ use std::io::{self, StdoutLock, Write};
 use crossterm::{cursor::*, queue, style::*, terminal::*};
 
 use crate::editor::{Editor, Mode};
-use crate::layout::{Layout, Rect, Split};
+use crate::layout::{Layout, Rect};
 
 pub fn render(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     queue!(stdout, Clear(ClearType::All))?;
@@ -51,22 +51,26 @@ fn gutter(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Resu
     let buf = ed.buf();
     let scroll = ed.win().scroll;
 
-    for y in 0..rect.h as usize {
+    for row in 0..rect.h as usize {
+        queue!(stdout, MoveTo(rect.x, rect.y + row as u16))?;
+        let y = scroll.y + row;
         if buf.lines.get(y).is_some() {
-            let line_no = (scroll.y + y + 1).to_string();
-            queue!(
-                stdout,
-                MoveTo(rect.x + 4 - line_no.len() as u16, rect.y + y as u16),
-                Print(line_no),
-            )?;
+            let line_no = format!("{:>4}", y + 1);
+            queue!(stdout, Print(line_no))?;
         } else {
-            queue!(stdout, MoveTo(rect.x, rect.y + y as u16), Print("~"))?;
+            queue!(stdout, Print("~"))?;
         }
     }
 
     queue!(stdout, ResetColor)?;
     Ok(())
 }
+
+const FG: Color = Color::Rgb {
+    r: 205,
+    g: 214,
+    b: 244,
+};
 
 fn buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
     let buf = ed.buf();
@@ -75,15 +79,16 @@ fn buffer(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Resu
     queue!(
         stdout,
         // (205, 214, 244)
-        SetForegroundColor(0xcdd6f4.to_color()),
+        // SetForegroundColor(0xcdd6f4.to_color()),
+        SetForegroundColor(FG),
     )?;
 
-    for y in 0..rect.h as usize {
-        if let Some(line) = buf.lines.get(scroll.y + y) {
+    for row in 0..rect.h as usize {
+        if let Some(line) = buf.lines.get(scroll.y + row) {
             let len = line.len().min(rect.w as usize);
             queue!(
                 stdout,
-                MoveTo(rect.x, rect.y + y as u16),
+                MoveTo(rect.x, rect.y + row as u16),
                 Print(&line[..len])
             )?;
         }
@@ -99,17 +104,28 @@ fn status(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Resu
         .as_ref()
         .map(|p| p.to_str().unwrap())
         .unwrap_or("[No Name]");
+    let path = format!(" {path} ");
 
-    let cur = ed.cursor();
-    let pos = format!(" {},{} ", cur.y, cur.x);
     let pad = rect.w as usize - mode.len() - path.len();
+    let cur = ed.cursor();
+    let pos = format!(
+        " {},{}  {:.0}% ",
+        cur.y + 1,
+        cur.x + 1,
+        (cur.y as f32 / ed.buf().lines.len() as f32) * 100.0
+    );
+
+    let bg = Color::Rgb {
+        r: 24,
+        g: 24,
+        b: 37,
+    };
 
     queue!(
         stdout,
         MoveTo(rect.x, rect.y),
-        SetBackgroundColor(Color::Red),
-        Print(mode.black().on_green()),
-        ResetColor,
+        Print(mode.with(bg).on_green()),
+        SetColors(Colors::new(FG, bg)),
         Print(path),
         Print(format!("{pos:>pad$}")),
         ResetColor,
@@ -134,6 +150,7 @@ fn cursor(ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Resu
     Ok(())
 }
 
+#[allow(unused)]
 fn render_command(_ed: &Editor, stdout: &mut StdoutLock<'static>, rect: Rect) -> io::Result<()> {
     queue!(
         stdout,

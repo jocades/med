@@ -15,15 +15,11 @@ impl Terminal {
         Self { stdout: init() }
     }
 
-    pub fn stdout(&mut self) -> &mut StdoutLock<'static> {
-        &mut self.stdout
-    }
-
     pub fn draw<F, R>(&mut self, f: F) -> io::Result<R>
     where
         F: FnOnce(&mut StdoutLock<'static>, Rect) -> io::Result<R>,
     {
-        let (w, h) = size().unwrap();
+        let (w, h) = size()?;
         let screen = Rect::new(0, 0, w, h);
         f(&mut self.stdout, screen)
     }

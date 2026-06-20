@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::layout::Vec2;
 
@@ -126,11 +126,13 @@ pub struct Editor {
     pub should_quit: bool,
 }
 
-impl Editor {
-    pub fn new() -> Self {
+impl Default for Editor {
+    fn default() -> Self {
         Self::with_buffer(Buffer::default())
     }
+}
 
+impl Editor {
     pub fn with_buffer(buffer: Buffer) -> Self {
         Self {
             mode: Mode::Normal,
