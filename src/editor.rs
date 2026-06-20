@@ -1,5 +1,6 @@
 //! # Pure editor state and behaviour.
 
+use std::fmt::Display;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -59,7 +60,7 @@ impl Buffer {
         let path = self
             .path
             .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "buffer has no path"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No file name"))?;
 
         let f = fs::File::create(path)?;
         let mut writer = io::BufWriter::new(f);
@@ -124,6 +125,39 @@ pub struct CmdLine {
     pub cursor: usize,
 }
 
+#[derive(Clone, Copy)]
+pub enum MessageKind {
+    Info,
+    Error,
+}
+
+pub struct Message {
+    pub kind: MessageKind,
+    pub text: String,
+}
+
+impl Message {
+    fn info(text: impl Into<String>) -> Self {
+        Self {
+            kind: MessageKind::Info,
+            text: text.into(),
+        }
+    }
+
+    fn error(text: impl Into<String>) -> Self {
+        Self {
+            kind: MessageKind::Error,
+            text: text.into(),
+        }
+    }
+}
+
+impl<T: std::error::Error> From<T> for Message {
+    fn from(e: T) -> Self {
+        Self::error(e.to_string())
+    }
+}
+
 pub struct Editor {
     pub buffers: Vec<Buffer>, // Invariant: at least one buffer
 
@@ -133,6 +167,8 @@ pub struct Editor {
     pub mode: Mode,
 
     pub cmdline: CmdLine,
+
+    pub message: Option<Message>,
 
     pub should_quit: bool,
 }
@@ -151,6 +187,7 @@ impl Editor {
             windows: vec![Window::default()],
             winid: 0,
             cmdline: CmdLine::default(),
+            message: None,
             should_quit: false,
         }
     }
@@ -206,7 +243,7 @@ impl Editor {
         match self.mode {
             Mode::Insert => len,
             Mode::Normal => len.saturating_sub(1),
-            Mode::Command => todo!(),
+            Mode::Command => unreachable!("cmdline uses its own cursor semantics"),
         }
     }
 
@@ -356,6 +393,44 @@ impl Editor {
         }
     }
 
+    // cmdline
+
+    pub fn cmdline_submit(&mut self) {
+        match Self::cmdline_parse(self.cmdline.buf.trim()) {
+            Ok(None) => {}
+            Ok(Some(cmd)) => match cmd {
+                Command::Quit => self.should_quit = true,
+                Command::Write => {
+                    if let Err(e) = self.buf_mut().write() {
+                        self.message = Some(e.into());
+                    } else {
+                        let path = self.buf().path.as_ref().unwrap().display();
+                        self.message = Some(Message::info(format!("{path} written")));
+                    }
+                }
+            },
+            Err(e) => {
+                self.message = Some(e.into());
+            }
+        }
+        self.mode = Mode::Normal;
+    }
+
+    pub fn cmdline_parse(input: &str) -> Result<Option<Command>, CmdError> {
+        let mut args = input.split_whitespace();
+        let Some(name) = args.next() else {
+            return Ok(None);
+        };
+
+        let cmd = match name {
+            "q" => Command::Quit,
+            "w" => Command::Write,
+            _ => return Err(CmdError::NotAnEditorCommand(name.into())),
+        };
+
+        Ok(Some(cmd))
+    }
+
     pub fn update(&mut self, event: Event) {
         match event {
             Event::Key(key) => {
@@ -426,6 +501,7 @@ fn normal(ed: &mut Editor, key: KeyEvent) {
         // normal -> command
         KeyCode::Char(':') => {
             ed.cmdline.clear();
+            ed.message = None;
             ed.mode = Mode::Command;
         }
 
@@ -469,6 +545,26 @@ pub fn insert(ed: &mut Editor, key: KeyEvent) {
     }
 }
 
+#[derive(Debug)]
+pub enum CmdError {
+    NotAnEditorCommand(String),
+}
+
+impl std::error::Error for CmdError {}
+
+impl Display for CmdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CmdError::NotAnEditorCommand(name) => write!(f, "Not an editor command: {name}"),
+        }
+    }
+}
+
+pub enum Command {
+    Quit,
+    Write,
+}
+
 impl CmdLine {
     fn move_left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
@@ -489,8 +585,8 @@ impl CmdLine {
         if self.buf.is_empty() {
             return;
         }
-        self.buf.remove(self.cursor);
         self.cursor -= 1;
+        self.buf.remove(self.cursor);
     }
 
     fn clear(&mut self) {
@@ -509,21 +605,7 @@ fn command(ed: &mut Editor, key: KeyEvent) {
 
         KeyCode::Enter => {
             crate::debug!("cmdline = {}", ed.cmdline.buf);
-
-            let input = ed.cmdline.buf.trim();
-
-            match input.split_once(' ') {
-                Some((name, args)) => {
-                    crate::debug!("name = {name} args = {args}")
-                }
-                None => {
-                    crate::debug!("name = {input}");
-                }
-            }
-
-            ed.mode = Mode::Normal;
-
-            // submit
+            ed.cmdline_submit();
         }
 
         KeyCode::Esc => ed.mode = Mode::Normal,

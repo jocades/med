@@ -4,7 +4,7 @@ use std::io::{self, StdoutLock, Write};
 
 use crossterm::{cursor::*, queue, style::*, terminal::*};
 
-use crate::editor::{Editor, Mode};
+use crate::editor::{Editor, MessageKind, Mode};
 use crate::layout::{Layout, Rect};
 
 pub fn render(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
@@ -137,8 +137,26 @@ fn status(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Resu
 
 fn cmdline(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     if ed.mode == Mode::Command {
-        queue!(stdout, MoveTo(rect.x, rect.y))?;
-        queue!(stdout, Print(":"), Print(&ed.cmdline.buf))?;
+        queue!(
+            stdout,
+            MoveTo(rect.x, rect.y),
+            Print(":"),
+            Print(&ed.cmdline.buf)
+        )?;
+    } else if let Some(message) = &ed.message {
+        let fg = match message.kind {
+            MessageKind::Info => FG,
+            MessageKind::Error => Color::Red,
+        };
+        queue!(
+            stdout,
+            MoveTo(rect.x, rect.y),
+            SetForegroundColor(fg),
+            Print(&message.text),
+            ResetColor,
+        )?;
+    } else {
+        // clear
     }
     Ok(())
 }
