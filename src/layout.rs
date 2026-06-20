@@ -1,7 +1,8 @@
 //! # Geometry and region splitting.
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum Error {
+    #[error("Not enough space")]
     NotEnoughSpace,
 }
 
@@ -143,22 +144,6 @@ impl Layout {
             status,
             cmdline,
         })
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::NotEnoughSpace => f.write_str("Not enought space"),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl From<Error> for std::io::Error {
-    fn from(e: Error) -> Self {
-        std::io::Error::other(e)
     }
 }
 

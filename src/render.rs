@@ -105,7 +105,10 @@ fn status(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Resu
         .as_ref()
         .map(|p| p.to_str().unwrap())
         .unwrap_or("[No Name]");
-    let path = format!(" {path} ");
+    let mut path = format!(" {path}");
+    if ed.buf().is_dirty {
+        path.push_str(" [+]")
+    }
 
     let pad = rect.w as usize - mode.len() - path.len();
     let cur = ed.cursor();

@@ -1,6 +1,5 @@
 //! # Pure editor state and behaviour.
 
-use std::fmt::Display;
 use std::fs;
 use std::io;
 use std::path::{self, Path, PathBuf};
@@ -14,6 +13,8 @@ pub struct Buffer {
     pub path: Option<PathBuf>, // Invariant: absolute path
     pub is_dirty: bool,
     pub ends_with_newline: bool,
+    /// To restore the last cursor and scroll when reentering the buffer.
+    pub last_view: Option<(Cursor, Vec2<usize>)>,
 }
 
 impl Default for Buffer {
@@ -23,6 +24,7 @@ impl Default for Buffer {
             path: None,
             is_dirty: false,
             ends_with_newline: false,
+            last_view: None,
         }
     }
 }
@@ -40,8 +42,8 @@ impl Buffer {
         Ok(Self {
             lines,
             path: Some(path::absolute(path)?),
-            is_dirty: false,
             ends_with_newline,
+            ..Default::default()
         })
     }
 
@@ -80,6 +82,10 @@ impl Buffer {
         self.is_dirty = false;
         Ok(())
     }
+
+    pub fn smudge(&mut self) {
+        self.is_dirty = true;
+    }
 }
 
 #[derive(Default)]
@@ -91,28 +97,37 @@ pub struct Window {
 }
 
 impl Window {
+    pub fn set_buf(&mut self, bufid: usize, last_view: Option<(Cursor, Vec2<usize>)>) {
+        self.bufid = bufid;
+        if let Some((cursor, scroll)) = last_view {
+            self.cursor = cursor;
+            self.scroll = scroll;
+        } else {
+            self.cursor = Cursor::default();
+            self.scroll = Vec2::default();
+        }
+    }
+
     pub fn sync_view(&mut self, view_h: u16) {
         let h = view_h as usize;
 
         if self.cursor.y < self.scroll.y {
             self.scroll.y = self.cursor.y;
-            crate::debug!("SCROLL_UP {:?} {:?}", self.cursor, self.scroll)
         } else if self.cursor.y >= self.scroll.y + h {
             self.scroll.y = self.cursor.y + 1 - h;
-            crate::debug!("SCROLL_DOWN {:?} {:?}", self.cursor, self.scroll)
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Cursor {
     pub x: usize,
     pub y: usize,
-    /// For vertical motions
+    /// Preferred column for vertical movement.
     pub want_x: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
     Normal,
     Insert,
@@ -151,13 +166,7 @@ impl Message {
         }
     }
 
-    fn from_error(e: &dyn std::error::Error) -> Self {
-        Self::error(e.to_string())
-    }
-}
-
-impl<T: std::error::Error> From<T> for Message {
-    fn from(e: T) -> Self {
+    fn from_error(e: impl std::error::Error) -> Self {
         Self::error(e.to_string())
     }
 }
@@ -194,6 +203,10 @@ impl Editor {
             message: None,
             should_quit: false,
         }
+    }
+
+    pub fn set_message(&mut self, msg: Message) {
+        self.message = Some(msg)
     }
 
     // Query
@@ -319,15 +332,18 @@ impl Editor {
     pub fn insert_char(&mut self, ch: char) {
         let col = self.cursor().x;
         self.line_mut().insert(col, ch);
+        self.buf_mut().smudge();
     }
 
     pub fn remove_char(&mut self, offset_x: i32) -> char {
         let col = self.cursor().x as i32 + offset_x;
+        self.buf_mut().smudge();
         self.line_mut().remove(col as usize)
     }
 
     pub fn insert_line(&mut self, offset_y: i32, content: Option<String>) {
         let row = self.cursor().y as i32 + offset_y;
+        self.buf_mut().smudge();
         self.buf_mut()
             .lines
             .insert(row as usize, content.unwrap_or_default());
@@ -335,6 +351,7 @@ impl Editor {
 
     pub fn remove_line(&mut self, offset_y: i32) -> String {
         let row = self.cursor().y as i32 + offset_y;
+        self.buf_mut().smudge();
         self.buf_mut().lines.remove(row as usize)
     }
 
@@ -347,6 +364,7 @@ impl Editor {
 
         self.remove_char(0);
         self.cursor_clamp_sync_x();
+        self.buf_mut().smudge();
     }
 
     pub fn delete_to_eol(&mut self) {
@@ -358,6 +376,7 @@ impl Editor {
 
         self.line_mut().truncate(x);
         self.cursor_clamp_sync_x();
+        self.buf_mut().smudge();
     }
 
     // Insert commands
@@ -376,6 +395,7 @@ impl Editor {
         }
 
         self.move_to(0, cur.y + 1);
+        self.buf_mut().smudge();
     }
 
     pub fn backspace(&mut self) {
@@ -385,6 +405,7 @@ impl Editor {
             // at mid or eol: remove char
             self.move_left();
             self.remove_char(0);
+            self.buf_mut().smudge();
             return;
         }
 
@@ -394,6 +415,7 @@ impl Editor {
             let nx = self.line_at(-1).len();
             self.move_to(nx, cur.y - 1);
             self.line_mut().push_str(&line);
+            self.buf_mut().smudge();
         }
     }
 
@@ -406,48 +428,57 @@ impl Editor {
                 Command::Quit => self.should_quit = true,
                 Command::Write => {
                     if let Err(e) = self.buf_mut().write() {
-                        self.message = Some(Message::from_error(&e));
+                        self.set_message(Message::from_error(e));
                     } else {
                         let path = self.buf().path.as_ref().unwrap().display();
-                        self.message = Some(Message::info(format!("{path} written")));
+                        let msg = format!("{path} written");
+                        self.set_message(Message::info(msg))
                     }
                 }
                 Command::Edit(path) => {
                     let path = path::absolute(path).unwrap();
-
-                    if let Some(bufid) = self
-                        .buffers
-                        .iter()
-                        .position(|b| b.path.as_ref() == Some(&path))
-                    {
-                        let win = self.win_mut();
-                        win.bufid = bufid;
-                        win.cursor = Cursor::default();
-                        win.scroll = Vec2::default();
-                        return;
-                    }
-
-                    match Buffer::from_path(path) {
-                        Err(e) => self.message = Some(Message::from_error(&e)),
-                        Ok(buffer) => {
-                            self.buffers.push(buffer);
-                            let bufid = self.buffers.len() - 1;
-                            let win = self.win_mut();
-                            win.bufid = bufid;
-                            win.cursor = Cursor::default();
-                            win.scroll = Vec2::default();
-                        }
+                    if let Some(bufid) = self.buf_open(path) {
+                        self.buf_leave();
+                        let last_view = self.buffers[bufid].last_view;
+                        self.win_mut().set_buf(bufid, last_view);
                     }
                 }
             },
-            Err(e) => {
-                self.message = Some(e.into());
-            }
+            Err(e) => self.set_message(Message::from_error(e)),
         }
         self.mode = Mode::Normal;
     }
 
-    pub fn cmdline_parse(input: &str) -> Result<Option<Command>, CmdError> {
+    fn buf_open(&mut self, path: PathBuf) -> Option<usize> {
+        if let Some(bufid) = self
+            .buffers
+            .iter()
+            .position(|b| b.path.as_ref() == Some(&path))
+        {
+            crate::debug!("Open existing buf: id = {bufid}");
+            return Some(bufid);
+        }
+
+        match Buffer::from_path(path) {
+            Err(e) => {
+                self.set_message(Message::from_error(e));
+                None
+            }
+            Ok(buffer) => {
+                self.buffers.push(buffer);
+                let bufid = self.buffers.len() - 1;
+                crate::debug!("Open new buf: id = {bufid}");
+                Some(bufid)
+            }
+        }
+    }
+
+    fn buf_leave(&mut self) {
+        let win = self.win();
+        self.buf_mut().last_view = Some((win.cursor, win.scroll));
+    }
+
+    pub fn cmdline_parse(input: &str) -> Result<Option<Command<'_>>, CmdError> {
         let mut args = input.split_whitespace();
         let Some(name) = args.next() else {
             return Ok(None);
@@ -460,7 +491,7 @@ impl Editor {
                 let Some(path) = args.next() else {
                     return Err(CmdError::MissingArgument("path".into()));
                 };
-                Command::Edit(path.into())
+                Command::Edit(path)
             }
             _ => return Err(CmdError::NotAnEditorCommand(name.into())),
         };
@@ -582,27 +613,18 @@ pub fn insert(ed: &mut Editor, key: KeyEvent) {
     }
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum CmdError {
+    #[error("Not an editor command: {0}")]
     NotAnEditorCommand(String),
+    #[error("Missing argument: {0}")]
     MissingArgument(String),
 }
 
-impl std::error::Error for CmdError {}
-
-impl Display for CmdError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CmdError::NotAnEditorCommand(name) => write!(f, "Not an editor command: {name}"),
-            CmdError::MissingArgument(arg) => write!(f, "Missing argument: {arg}"),
-        }
-    }
-}
-
-pub enum Command {
+pub enum Command<'a> {
     Quit,
     Write,
-    Edit(String),
+    Edit(&'a str),
 }
 
 impl CmdLine {

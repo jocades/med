@@ -18,7 +18,7 @@ fn main() -> io::Result<()> {
 
     while !editor.should_quit {
         terminal.draw(|stdout, screen| {
-            let layout = Layout::from_screen(screen)?;
+            let layout = Layout::from_screen(screen).unwrap();
             editor.win_mut().sync_view(layout.buffer.h);
             render(&editor, &layout, stdout)
         })?;
