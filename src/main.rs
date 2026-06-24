@@ -1,4 +1,5 @@
 use std::io;
+use std::time::Instant;
 
 use crossterm::event;
 
@@ -17,11 +18,13 @@ fn main() -> io::Result<()> {
     let mut editor = Editor::with_buffer(buffer);
 
     while !editor.should_quit {
+        let start = Instant::now();
         terminal.draw(|stdout, screen| {
             let layout = Layout::from_screen(screen).unwrap();
             editor.win_mut().sync_view(layout.buffer.h);
             render(&editor, &layout, stdout)
         })?;
+        med::debug!("took {:?}", start.elapsed());
 
         let event = event::read()?;
         // med::debug!("{event:?}");
