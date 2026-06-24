@@ -6,6 +6,7 @@ use crossterm::{cursor::*, queue, style::*, terminal::*};
 
 use crate::editor::{Editor, MessageKind, Mode};
 use crate::layout::{Layout, Rect};
+use crate::terminal::Frame;
 
 pub fn render(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io::Result<()> {
     queue!(stdout, Clear(ClearType::All))?;
@@ -190,3 +191,9 @@ fn cursor(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io:
     queue!(stdout, style, MoveTo(x, y))?;
     Ok(())
 }
+
+fn render_frame(ed: &Editor, layout: &Layout, frame: &mut Frame) {
+    //
+}
+
+fn gutter_frame(ed: &Editor, rect: Rect, frame: &mut Frame) {}

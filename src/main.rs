@@ -1,7 +1,7 @@
 use std::io;
 use std::time::Instant;
 
-use crossterm::event;
+use crossterm::{event, queue};
 
 use med::editor::{Buffer, Editor};
 use med::layout::Layout;
@@ -20,10 +20,29 @@ fn main() -> io::Result<()> {
     while !editor.should_quit {
         let start = Instant::now();
         terminal.draw(|stdout, screen| {
-            let layout = Layout::from_screen(screen).unwrap();
-            editor.win_mut().sync_view(layout.buffer.h);
-            render(&editor, &layout, stdout)
+            crossterm::execute!(
+                stdout,
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+                crossterm::cursor::MoveTo(0, 0),
+                crossterm::style::SetBackgroundColor(crossterm::style::Color::White),
+                crossterm::style::SetForegroundColor(crossterm::style::Color::Black),
+                crossterm::style::Print("Foo"),
+            )
+
+            // let layout = Layout::from_screen(screen).unwrap();
+            // editor.win_mut().sync_view(layout.buffer.h);
+            // render(&editor, &layout, stdout)
         })?;
+
+        // terminal.draw_frame(|frame| {
+        //     frame.buffer.put_str(
+        //         0,
+        //         0,
+        //         "Foo",
+        //         crossterm::style::Color::Black,
+        //         crossterm::style::Color::White,
+        //     );
+        // })?;
         med::debug!("took {:?}", start.elapsed());
 
         let event = event::read()?;
