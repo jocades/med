@@ -24,6 +24,7 @@ fn main() -> io::Result<()> {
         })?;
 
         let event = event::read()?;
+        // med::debug!("{event:?}");
         editor.update(event);
     }
 

@@ -53,7 +53,12 @@ impl Buffer {
         (lines, ends_with_newline)
     }
 
-    pub fn write(&mut self) -> io::Result<()> {
+    fn is_empty(&self) -> bool {
+        debug_assert_ne!(self.lines.len(), 0, "Must always keep at least one line");
+        self.lines.len() == 1 && self.lines[0].is_empty()
+    }
+
+    pub fn write(&mut self) -> io::Result<(usize, usize)> {
         use io::Write;
 
         let path = self
@@ -62,22 +67,31 @@ impl Buffer {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "No file name"))?;
 
         let f = fs::File::create(path)?;
+
+        if self.is_empty() {
+            return Ok((0, 0));
+        }
+
         let mut writer = io::BufWriter::new(f);
+        let mut byte_count = 0;
 
         for (i, line) in self.lines.iter().enumerate() {
             if i > 0 {
                 writer.write_all(b"\n")?;
             }
-            writer.write_all(line.as_bytes())?;
+            let bytes = line.as_bytes();
+            writer.write_all(bytes)?;
+            byte_count += bytes.len();
         }
 
-        if self.ends_with_newline && !(self.lines.len() == 1 && self.lines[0].is_empty()) {
-            writer.write_all(b"\n")?;
-        }
+        // if self.ends_with_newline && !(self.lines.len() == 1 && self.lines[0].is_empty()) {
+        //     writer.write_all(b"\n")?;
+        // }
 
         writer.flush()?;
         self.is_dirty = false;
-        Ok(())
+
+        Ok((self.lines.len(), byte_count))
     }
 
     pub fn smudge(&mut self) {

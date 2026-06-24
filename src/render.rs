@@ -114,8 +114,8 @@ fn status(ed: &Editor, rect: Rect, stdout: &mut StdoutLock<'static>) -> io::Resu
     let cur = ed.cursor();
     let pos = format!(
         " {},{}  {:.0}% ",
-        cur.y + 1,
-        cur.x + 1,
+        cur.y,
+        cur.x,
         (cur.y as f32 / ed.buf().lines.len() as f32) * 100.0
     );
 
@@ -171,10 +171,11 @@ fn cursor(ed: &Editor, layout: &Layout, stdout: &mut StdoutLock<'static>) -> io:
     let style = match ed.mode {
         Mode::Normal => SetCursorStyle::SteadyBlock,
         Mode::Insert | Mode::Command => SetCursorStyle::SteadyBar,
+        Mode::OperatorPending(_) => SetCursorStyle::SteadyUnderScore,
     };
 
     let (x, y) = match ed.mode {
-        Mode::Normal | Mode::Insert => {
+        Mode::Normal | Mode::Insert | Mode::OperatorPending(_) => {
             let rect = layout.buffer;
             let x = rect.x + (cursor.x - scroll.x) as u16;
             let y = rect.y + (cursor.y - scroll.y) as u16;

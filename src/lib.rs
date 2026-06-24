@@ -5,7 +5,7 @@ pub mod terminal;
 
 use std::{fs::File, sync::LazyLock};
 
-pub(crate) static mut DEBUG_FILE: LazyLock<File> = LazyLock::new(|| {
+pub static mut DEBUG_FILE: LazyLock<File> = LazyLock::new(|| {
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)

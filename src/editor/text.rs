@@ -4,6 +4,7 @@ impl Editor {
     // --  Move --
     pub fn move_to(&mut self, x: usize, y: usize) {
         *self.cursor_mut() = Cursor { x, y, want_x: x };
+        self.cursor_clamp_x();
     }
 
     pub fn cursor_clamp_x(&mut self) {
@@ -24,6 +25,12 @@ impl Editor {
         cur.want_x = cur.x;
     }
 
+    pub fn move_left_n(&mut self, count: usize) {
+        let cur = self.cursor_mut();
+        cur.x = cur.x.saturating_sub(count);
+        cur.want_x = cur.x;
+    }
+
     pub fn move_right(&mut self) {
         let max = self.cursor_max_x();
         let cur = self.cursor_mut();
@@ -33,9 +40,23 @@ impl Editor {
         }
     }
 
+    pub fn move_right_n(&mut self, count: usize) {
+        let max = self.cursor_max_x();
+        let cur = self.cursor_mut();
+        cur.x = (cur.x + count).min(max);
+        cur.want_x = cur.x;
+    }
+
     pub fn move_up(&mut self) {
         let cur = self.cursor_mut();
         cur.y = cur.y.saturating_sub(1);
+        cur.x = cur.want_x;
+        self.cursor_clamp_x();
+    }
+
+    pub fn move_up_n(&mut self, count: usize) {
+        let cur = self.cursor_mut();
+        cur.y = cur.y.saturating_sub(count);
         cur.x = cur.want_x;
         self.cursor_clamp_x();
     }
@@ -48,6 +69,14 @@ impl Editor {
             cur.x = cur.want_x;
             self.cursor_clamp_x();
         }
+    }
+
+    pub fn move_down_n(&mut self, count: usize) {
+        let max = self.buf().lines.len() - 1;
+        let cur = self.cursor_mut();
+        cur.y = (cur.y + count).min(max);
+        cur.x = cur.want_x;
+        self.cursor_clamp_x();
     }
 
     pub fn move_bol(&mut self) {
@@ -94,9 +123,43 @@ impl Editor {
         let len = self.line().len();
         match self.mode {
             Mode::Insert => len,
-            Mode::Normal => len.saturating_sub(1),
+            Mode::Normal | Mode::OperatorPending(_) => len.saturating_sub(1),
             Mode::Command => unreachable!("cmdline uses its own cursor semantics"),
         }
+    }
+
+    pub fn delete_line(&mut self) {
+        let line_count = self.buf().lines.len();
+
+        if line_count == 1 {
+            self.line_mut().clear();
+        } else {
+            self.remove_line(0);
+        }
+
+        if self.cursor().y == line_count - 1 {
+            self.move_up();
+        }
+
+        self.cursor_clamp_sync_x();
+    }
+
+    pub fn delete_lines(&mut self, count: usize) -> Vec<String> {
+        let start = self.cursor().y;
+        let end = (start + count).min(self.buf().lines.len());
+
+        let deleted: Vec<_> = self.buf_mut().lines.drain(start..end).collect();
+
+        if self.buf().lines.is_empty() {
+            self.buf_mut().lines.push(String::new());
+        }
+
+        let ny = start.min(self.buf().lines.len() - 1);
+        self.cursor_mut().y = ny;
+        self.cursor_clamp_sync_x();
+        self.buf_mut().smudge();
+
+        deleted
     }
 
     pub fn delete_under_cursor(&mut self) {
@@ -116,6 +179,16 @@ impl Editor {
         }
 
         self.line_mut().truncate(x);
+        self.cursor_clamp_sync_x();
+        self.buf_mut().smudge();
+    }
+
+    pub fn delete_to_bol(&mut self) {
+        let x = self.cursor().x;
+        if x == 0 {
+            return;
+        }
+        self.line_mut().drain(..x);
         self.cursor_clamp_sync_x();
         self.buf_mut().smudge();
     }

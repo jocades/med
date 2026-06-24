@@ -62,7 +62,7 @@ impl CmdLine {
 
 pub enum Command {
     Quit,
-    Write,
+    Write(Option<String>),
     Edit(String),
 }
 
@@ -75,7 +75,13 @@ pub fn parse(input: &str) -> Result<Option<Command>, Error> {
 
     let cmd = match name {
         "q" => Command::Quit,
-        "w" => Command::Write,
+        "w" => {
+            if let Some(path) = args.next() {
+                Command::Write(Some(path.into()))
+            } else {
+                Command::Write(None)
+            }
+        }
         "e" => {
             let Some(path) = args.next() else {
                 return Err(Error::MissingArgument("path"));
@@ -100,13 +106,19 @@ fn submit(ed: &mut Editor) {
 fn execute(ed: &mut Editor, cmd: Command) {
     match cmd {
         Command::Quit => ed.should_quit = true,
-        Command::Write => {
-            if let Err(e) = ed.buf_mut().write() {
-                ed.set_message(Message::from_error(e));
-            } else {
-                let path = ed.buf().path.as_ref().unwrap().display();
-                let msg = format!("{path} written");
-                ed.set_message(Message::info(msg))
+        Command::Write(dest) => {
+            if let Some(path) = dest {
+                let path = path::absolute(path).unwrap();
+                ed.buf_mut().path = Some(path);
+            }
+
+            match ed.buf_mut().write() {
+                Err(e) => ed.set_message(Message::from_error(e)),
+                Ok((lines, bytes)) => {
+                    let path = ed.buf().path.as_ref().unwrap().display();
+                    let info = format!("\"{path}\" {lines}L, {bytes}B written");
+                    ed.set_message(Message::info(info))
+                }
             }
         }
         Command::Edit(path) => {

@@ -3,7 +3,9 @@
 mod buffer;
 mod cmdline;
 mod insert;
+mod motion;
 mod normal;
+mod operator;
 mod text;
 mod window;
 
@@ -15,11 +17,12 @@ pub use buffer::Buffer;
 pub use cmdline::CmdLine;
 pub use window::{Cursor, Window};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
     Normal,
     Insert,
     Command,
+    OperatorPending(operator::State),
 }
 
 pub struct Editor {
@@ -32,6 +35,7 @@ pub struct Editor {
     pub cmdline: CmdLine,
     pub message: Option<Message>,
 
+    pending_count: Option<usize>,
     pub should_quit: bool,
 }
 
@@ -50,6 +54,7 @@ impl Editor {
             winid: 0,
             cmdline: CmdLine::default(),
             message: None,
+            pending_count: None,
             should_quit: false,
         }
     }
@@ -131,6 +136,19 @@ impl Editor {
         self.buf_mut().last_view = Some((win.cursor, win.scroll));
     }
 
+    fn clear_pending_count(&mut self) {
+        self.pending_count = None;
+    }
+
+    fn take_pending_count(&mut self) -> usize {
+        self.pending_count.take().unwrap_or(1)
+    }
+
+    fn push_pending_count_digit(&mut self, n: u32) {
+        let count = self.pending_count.unwrap_or(0);
+        self.pending_count = Some(count * 10 + n as usize);
+    }
+
     pub fn update(&mut self, event: Event) {
         match event {
             Event::Key(key) => {
@@ -142,6 +160,7 @@ impl Editor {
                     Mode::Normal => normal::handle(self, key),
                     Mode::Insert => insert::handle(self, key),
                     Mode::Command => cmdline::handle(self, key),
+                    Mode::OperatorPending(state) => operator::handle(self, key, state),
                 }
             }
             _ => {}
@@ -183,7 +202,7 @@ impl Message {
 impl std::fmt::Display for Mode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Mode::Normal => f.write_str("NORMAL"),
+            Mode::Normal | Self::OperatorPending(_) => f.write_str("NORMAL"),
             Mode::Insert => f.write_str("INSERT"),
             Mode::Command => f.write_str("COMMAND"),
         }
